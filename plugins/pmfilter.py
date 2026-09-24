@@ -1475,11 +1475,9 @@ async def auto_filter(client, msg, spoll=False):
 
     async def _schedule_delete(sent_obj, orig_msg, delay):
         try:
-            if RESULT_ARCHIVE_CHANNEL and RESULT_ARCHIVE_CHANNEL != -100:
-                try:
-                    await sent_obj.copy(RESULT_ARCHIVE_CHANNEL)
-                except Exception as e:
-                    logger.warning(f"Could not archive result post to RESULT_ARCHIVE_CHANNEL: {e}")
+            # NOTE: the search-result card is no longer archived here.
+            # The poster-style post (sent after the user clicks "Download File")
+            # is archived to RESULT_ARCHIVE_CHANNEL from plugins/commands.py instead.
             await asyncio.sleep(delay)
             try:
                 await sent_obj.delete()
