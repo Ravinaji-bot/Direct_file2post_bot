@@ -464,6 +464,9 @@ async def update_movie_message(bot, base_name):
             await send_movie_update(bot, base_name)
             return
 
+        if movie_doc.get("poster_url") and LINK_PREVIEW and not is_photo:
+            text = f"<a href='{movie_doc['poster_url']}'>&#8205;</a>{text}"
+
         try:
             if is_photo:
                 await bot.edit_message_caption(
