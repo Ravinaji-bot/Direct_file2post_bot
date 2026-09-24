@@ -419,6 +419,8 @@ async def send_movie_update(bot, base_name):
                     msg = await bot.send_message(**send_params)
                     is_photo = False
             else:
+                if movie_doc.get("poster_url") and LINK_PREVIEW:
+                    text = f"<a href='{movie_doc['poster_url']}'>&#8205;</a>{text}"
                 send_params = {
                     "chat_id": MOVIE_UPDATE_CHANNEL,
                     "text": text,
