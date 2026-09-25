@@ -499,15 +499,14 @@ async def get_posterx(query, bulk=False, id=False, file=None):
 
 
 async def get_landscape_thumb(filename):
-async def get_landscape_thumb(filename):
     """
     Fetches a landscape poster/backdrop image URL for the given filename (via TMDB).
 
-    IMPORTANT: Telegram ignores a custom `thumb` when a video/document is (re)sent by an
+    IMPORTANT: Telegram ignores a custom thumb when a video/document is (re)sent by an
     existing file_id (i.e. cached media) - a custom thumbnail can only be set while a file
     is being freshly uploaded. The only override that actually works for already-uploaded
-    videos is the `cover` (video_cover) field, so this returns a plain image URL meant to be
-    passed as `cover=` to send_video, not as `thumb=`.
+    videos is the cover (video_cover) field, so this returns a plain image URL meant to be
+    passed as cover= to send_video, not as thumb=.
     Returns None on any failure (caller should then fall back to the file's own cover/thumbnail).
     """
     try:
