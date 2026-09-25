@@ -499,31 +499,24 @@ async def get_posterx(query, bulk=False, id=False, file=None):
 
 
 async def get_landscape_thumb(filename):
+async def get_landscape_thumb(filename):
     """
-    Fetches a landscape poster/backdrop for the given filename (via TMDB), downloads it,
-    resizes it to fit Telegram's thumbnail limits, and returns a local JPEG file path.
-    Returns None on any failure (caller should then fall back to the file's own thumbnail).
+    Fetches a landscape poster/backdrop image URL for the given filename (via TMDB).
+
+    IMPORTANT: Telegram ignores a custom `thumb` when a video/document is (re)sent by an
+    existing file_id (i.e. cached media) - a custom thumbnail can only be set while a file
+    is being freshly uploaded. The only override that actually works for already-uploaded
+    videos is the `cover` (video_cover) field, so this returns a plain image URL meant to be
+    passed as `cover=` to send_video, not as `thumb=`.
+    Returns None on any failure (caller should then fall back to the file's own cover/thumbnail).
     """
     try:
-        import aiohttp, io, hashlib
-        from PIL import Image
         title_guess = clean_filename(filename) or filename
         imdb_data = await get_posterx(title_guess, file=filename) if TMDB_POSTER else await get_poster(title_guess, file=filename)
         if not imdb_data:
             return None
         img_url = imdb_data.get('backdrop') or imdb_data.get('poster')
-        if not img_url:
-            return None
-        async with aiohttp.ClientSession() as session:
-            async with session.get(img_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.read()
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        img.thumbnail((320, 320))
-        out_path = f"/tmp/dxthumb_{hashlib.md5(filename.encode()).hexdigest()[:12]}.jpg"
-        img.save(out_path, "JPEG", quality=85)
-        return out_path
+        return img_url or None
     except Exception as e:
         logger.warning(f"get_landscape_thumb failed: {e}")
         return None
