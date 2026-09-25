@@ -8,7 +8,7 @@ from info import (
     AUTO_DELETE, AUTO_FFILTER, MAX_BTN, IMDB_TEMPLATE, LOG_VR_CHANNEL, TUTORIAL, TUTORIAL_2,
     TUTORIAL_3, SHORTENER_API, SHORTENER_API2, SHORTENER_API3, SHORTENER_WEBSITE, SHORTENER_WEBSITE2,
     SHORTENER_WEBSITE3, IS_VERIFY, TWO_VERIFY_GAP, THREE_VERIFY_GAP, CUSTOM_FILE_CAPTION, AUTH_CHANNELS,
-    MOVIE_UPDATE_NOTIFICATION
+    MOVIE_UPDATE_NOTIFICATION, AUTO_POSTER_THUMB
 )
 
 
@@ -155,7 +155,7 @@ class Database:
             'button': BUTTON_MODE,
             'result_card': False,
             'post_style_dl': False,
-            'poster_thumb': False,
+            'poster_thumb': AUTO_POSTER_THUMB,
             'botpm': P_TTI_SHOW_OFF,
             'file_secure': PROTECT_CONTENT,
             'imdb': IMDB,
