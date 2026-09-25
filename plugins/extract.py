@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import logging
 import aiofiles
 import tempfile
@@ -91,8 +92,11 @@ async def extract_data_handler(client: Client, query: CallbackQuery):
             )
 
         file_name = get_name(log_msg)
+        # Strip any "@ChannelName" tag from the start/anywhere in the filename before
+        # it becomes the Telegraph page title (e.g. "@MoviesFlickerPathaan..." -> "Pathaan...").
+        file_name_clean = re.sub(r'@\S+', '', file_name).strip()
         safe_title = (
-            file_name.replace(".", " ")
+            file_name_clean.replace(".", " ")
             .replace("_", " ")
             .replace("-", " ")
             .replace("[", "")
@@ -192,7 +196,7 @@ async def extract_data_handler(client: Client, query: CallbackQuery):
             page_parts.append("<b>Subtitle Tracks:</b> None<br>")
 
         page_parts.append(
-            '<i><code>Join <a href="https://t.me/Requiest_your_faw">DreamxBotz</a></code></i>'
+            '<i><code>Join <a href="https://t.me/DragonFirePro_bot">Main Group</a></code></i>'
         )
 
         page_content = "".join(page_parts)
@@ -202,7 +206,7 @@ async def extract_data_handler(client: Client, query: CallbackQuery):
                 telegraph.create_page,
                 title=safe_title[:200],
                 html_content=page_content,
-                author_name="DreamxBotz"
+                author_name="Dragon Fire 🔥"
             )
         except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
             await query.message.reply_text("⚠️ Telegraph is busy. Try again later.")
