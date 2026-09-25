@@ -37,31 +37,32 @@ REQUEST_INVITE_LINK_CACHE: dict[int, str] = {}
 
 async def _deliver_file(client, chat_id, files1, file_id, caption, btn, protect_content, use_poster_thumb, cover=None):
     """
-    Sends a single file to `chat_id`. If use_poster_thumb is True, tries to replace the
-    file's own thumbnail with a freshly fetched TMDB landscape poster; falls back to the
-    normal cached-media send (original thumbnail) on any failure.
+    Sends a single file to `chat_id`. If use_poster_thumb is True and the file is a video,
+    fetches a fresh TMDB landscape poster/backdrop and sends it as the video's `cover`
+    (Telegram's video_cover feature) - this is the only way to override the preview image
+    of an already-uploaded/cached video. Falls back to the file's original cover/thumbnail
+    on any failure. Plain (non-video) documents keep their original thumbnail, since
+    Telegram has no cover-override mechanism for documents sent by file_id.
     """
-    thumb_path = None
-    if use_poster_thumb:
+    is_video = files1.file_type == "video" or (files1.mime_type and files1.mime_type.startswith("video/"))
+    poster_cover = None
+    if use_poster_thumb and is_video:
         try:
-            thumb_path = await get_landscape_thumb(files1.file_name)
+            poster_cover = await get_landscape_thumb(files1.file_name)
         except Exception as e:
             logger.warning(f"poster_thumb fetch failed: {e}")
-            thumb_path = None
-    if thumb_path:
+            poster_cover = None
+    final_cover = poster_cover or cover
+
+    if is_video:
         try:
-            send_kwargs = dict(chat_id=chat_id, caption=caption, thumb=thumb_path, protect_content=protect_content, reply_markup=InlineKeyboardMarkup(btn))
-            if files1.file_type == "video" or (files1.mime_type and files1.mime_type.startswith("video/")):
-                return await client.send_video(video=file_id, supports_streaming=True, **send_kwargs)
-            return await client.send_document(document=file_id, **send_kwargs)
+            return await client.send_video(
+                chat_id=chat_id, video=file_id, supports_streaming=True, caption=caption,
+                cover=final_cover, protect_content=protect_content, reply_markup=InlineKeyboardMarkup(btn)
+            )
         except Exception as e:
-            logger.warning(f"send with poster_thumb failed, falling back: {e}")
-        finally:
-            try:
-                os.remove(thumb_path)
-            except Exception:
-                pass
-    return await client.send_cached_media(chat_id=chat_id, file_id=file_id, cover=cover, caption=caption, protect_content=protect_content, reply_markup=InlineKeyboardMarkup(btn))
+            logger.warning(f"send_video with poster cover failed, falling back: {e}")
+    return await client.send_cached_media(chat_id=chat_id, file_id=file_id, cover=final_cover, caption=caption, protect_content=protect_content, reply_markup=InlineKeyboardMarkup(btn))
 
 
 @Client.on_message(filters.command("start") & filters.incoming)
