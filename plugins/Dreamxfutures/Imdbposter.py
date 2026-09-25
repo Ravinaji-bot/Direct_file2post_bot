@@ -135,10 +135,16 @@ async def _fetch_media_details(media_type: str, media_id: int, api_key=None):
     return await _tmdb_get(f"{media_type}/{media_id}", params=params, api_key=api_key)
 
 
-async def _search_media_id(query: str, api_key=None):
+async def _search_media_id(query: str, api_key=None, file: str = None):
     """Search TMDB for the best matching movie/TV show and return (media_type, media_id)."""
     title, year = _extract_title_and_year(query)
-    
+
+    # If the filename has a season/episode marker (e.g. "S05E01", "Season 5"), this is
+    # unambiguously a TV series - restrict results to 'tv' only, so a movie that
+    # happens to share the exact same title (e.g. "Lucifer" the Malayalam film vs
+    # "Lucifer" the TV series) never gets picked by mistake.
+    is_series = bool(re.search(r'[Ss]\d{1,2}\s?[Ee]\d{1,3}|\bSeason\s?\d{1,2}\b', file or query, re.IGNORECASE))
+
     multi_results = []
     words = title.split()
     
@@ -181,6 +187,8 @@ async def _search_media_id(query: str, api_key=None):
     candidates_past, candidates_upcoming = [], []
     for r, ratio in scored_results:
         mtype = r.get('media_type')
+        if is_series and mtype != 'tv':
+            continue
         rd_str = r.get('release_date') or r.get('first_air_date')
         if not (rd_str and mtype in ['movie', 'tv']):
             continue
@@ -188,7 +196,7 @@ async def _search_media_id(query: str, api_key=None):
             rd_date = datetime.strptime(rd_str, '%Y-%m-%d').date()
         except ValueError:
             continue
-        if year:
+        if year and not is_series:
             if abs(rd_date.year - year) > 1:
                 continue
         if mtype == 'movie':
@@ -228,12 +236,12 @@ def _process_images(images_data):
     return {'posters': posters_by_lang, 'backdrops': backdrops_by_lang, 'available_languages': languages}
 
 
-async def _fetch_tmdb_data(query: str, api_key=None):
+async def _fetch_tmdb_data(query: str, api_key=None, file: str = None):
     """
     Core TMDB lookup: search → fetch details → build response dict.
     This replaces the external tmdb.blazeposters.workers.dev API call.
     """
-    media_type, media_id = await _search_media_id(query, api_key=api_key)
+    media_type, media_id = await _search_media_id(query, api_key=api_key, file=file)
     if not media_id:
         return None
 
@@ -403,7 +411,7 @@ async def get_movie_detailsx(query, id=False, file=None):
     """
     q = str(query).strip()
     try:
-        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None)
+        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file)
         if not data:
             logger.info(f"TMDB returned no results for '{q}' → switching to IMDb fallback")
             return await get_movie_details(q)
@@ -457,4 +465,3 @@ async def get_movie_detailsx(query, id=False, file=None):
     details['backdrop_url'] = backdrop_url.replace("/original/", "/w1280/") if backdrop_url else None
 
     return details
-
