@@ -87,7 +87,20 @@ def _list_to_str_tmdb(data_list, limit=10, key=None):
 
 
 def _extract_title_and_year(query: str):
-    """Extract title and optional year from a search query string."""
+    """Extract title and optional year from a search query string.
+
+    Looks for a 4-digit year (1900-2099) ANYWHERE in the string, not just at the very
+    end - real filenames put the year in the middle, e.g. "Dark (2026) 1080p HDRip ORG...".
+    Everything before that year is treated as the title. Falls back to the old
+    end-of-string behavior if no such year is found anywhere.
+    """
+    match = re.search(r'(19\d{2}|20\d{2})', query)
+    if match:
+        year = int(match.group(1))
+        title = query[:match.start()].strip(" -_.([{")
+        if title:
+            return title, year
+
     match = re.search(r'^(.*?)(?:\s+(\d{4}))?$', query.strip())
     if match:
         title, year_str = match.groups()
