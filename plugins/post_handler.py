@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 
 post_sessions = {}
 
+# Matches "S01", "S 02", "Season 2", "Season 02" etc. inside the typed /post text
+# (unlike channel.py's regexes this does NOT require an episode number, since
+# admins type things like "/post Game Of Thrones S02" or "... Season 2" with no episode)
+SEASON_ONLY_REGEX = re.compile(r'\bS(?:eason)?\s*0*(\d{1,2})\b', re.IGNORECASE)
+
+
+def _extract_season_and_clean_title(movie_name: str):
+    """Pull a season number out of a typed /post title, if present, and return
+    (season_int_or_None, title_with_season_token_removed)."""
+    m = SEASON_ONLY_REGEX.search(movie_name)
+    if not m:
+        return None, movie_name
+    season = int(m.group(1))
+    cleaned = (movie_name[:m.start()] + movie_name[m.end():]).strip()
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip(" -_.[](){}")
+    return season, cleaned or movie_name
+
 USE_GETFILE_BUTTON_BY_DEFAULT = True
 DEFAULT_WATERMARK = "Join [ᴅʀᴇᴀᴍxʙᴏᴛᴢ](https://t.me/Magicofgroup)"
 LANGUAGES_FORMAT = "➥ <b>Languages :</b> <code>{langs}</code>"
@@ -144,7 +161,8 @@ async def post_command(client: Client, message: Message):
 
 #code is created by @bharath_boy for public use so atleast don't remove credits
 async def start_post_session(client: Client, message: Message, user_id: int, movie_name: str):
-    movie_details = await get_movie_detailsx(movie_name)
+    season_num, title_for_lookup = _extract_season_and_clean_title(movie_name)
+    movie_details = await get_movie_detailsx(title_for_lookup, season=season_num)
     if not movie_details:
         return await message.reply_text("Could not fetch details for the movie.")
 
@@ -157,7 +175,7 @@ async def start_post_session(client: Client, message: Message, user_id: int, mov
             pass
 
     post_sessions[user_id] = {
-        "movie_name": movie_name, "caption": None, "buttons": [],
+        "movie_name": movie_name, "season": season_num, "caption": None, "buttons": [],
         "photo_mode": False,
         "use_landscape": True if movie_details.get("backdrop_url") else False,
         "custom_languages": [], "custom_resolutions": [], "custom_otts": [],
@@ -623,4 +641,3 @@ async def finalize_and_post(client: Client, query: CallbackQuery, session_id: in
         await status_msg.edit(error_text)
         logger.error(
             f"An unexpected error occurred while posting '{session['movie_name']}':", exc_info=True)
-
