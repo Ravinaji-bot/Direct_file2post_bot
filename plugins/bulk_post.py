@@ -42,6 +42,7 @@ from plugins.channel import (
     send_movie_update,
     update_movie_message,
     STANDARD_GENRES,
+    _series_group_key,
 )
 from plugins.Dreamxfutures.Imdbposter import get_movie_detailsx, get_movie_details
 
@@ -99,6 +100,10 @@ async def _scan(bot, chat_id):
                     errors += 1
                     continue
 
+                # For series, queue each season separately so it later becomes
+                # its own post instead of every season being merged into one.
+                group_key = _series_group_key(base, info["season"]) if info["tag"] == "#SERIES" else base
+
                 m = YEAR_TAIL.search(base)
                 year = int(m.group(1)) if m else 0
                 if year > max_year:      # e.g. "Blade Runner 2049" is not a 2049 release
@@ -118,9 +123,10 @@ async def _scan(bot, chat_id):
                     "file_size": doc.get("file_size") or 0,
                 }
                 ops.append(UpdateOne(
-                    {"_id": base},
+                    {"_id": group_key},
                     {
                         "$setOnInsert": {
+                            "title": base,
                             "year": year,
                             "status": "pending",
                             "tag": info["tag"],
@@ -162,41 +168,44 @@ async def _scan(bot, chat_id):
 # --------------------------------------------------------------------------- post
 async def _post_one(bot, qdoc, allow_noposter):
     """Returns one of: done, skipped, noposter, failed."""
-    base_name = qdoc["_id"]
+    group_key = qdoc["_id"]
+    # Old queue entries (scanned before this change) won't have a "title"
+    # field - fall back to the key itself, which was the plain title back then.
+    title_base = qdoc.get("title") or group_key
     files = qdoc.get("files", [])
     mu = db.db.movie_updates
 
-    existing = await mu.find_one({"_id": base_name})
+    existing = await mu.find_one({"_id": group_key})
     if existing and not existing.get("files"):
-        await mu.delete_one({"_id": base_name})      # empty stub, replace it
+        await mu.delete_one({"_id": group_key})      # empty stub, replace it
         existing = None
 
     if existing:
         have = {f.get("file_id") for f in existing["files"]}
         new_files = [f for f in files if f["file_id"] not in have]
         if new_files:
-            await mu.update_one({"_id": base_name}, {"$push": {"files": {"$each": new_files}}})
+            await mu.update_one({"_id": group_key}, {"$push": {"files": {"$each": new_files}}})
         if existing.get("message_id"):
             if new_files:
-                await update_movie_message(bot, base_name)
+                await update_movie_message(bot, group_key)
             return "skipped"
-        msg = await send_movie_update(bot, base_name)
+        msg = await send_movie_update(bot, group_key)
         return "done" if msg else "failed"
 
     error_tmdb = False
     details = {}
     try:
         if TMDB_POSTER:
-            details = await get_movie_detailsx(base_name)
+            details = await get_movie_detailsx(title_base)
             if not details or details.get("error") or (
                 not details.get("poster_url") and not details.get("backdrop_url")
             ):
                 error_tmdb = True
-                details = await get_movie_details(base_name) or {}
+                details = await get_movie_details(title_base) or {}
         else:
-            details = await get_movie_details(base_name) or {}
+            details = await get_movie_details(title_base) or {}
     except Exception:
-        logger.exception("bulkpost: poster lookup failed for %s", base_name)
+        logger.exception("bulkpost: poster lookup failed for %s", title_base)
         error_tmdb = True
         details = {}
 
@@ -214,7 +223,8 @@ async def _post_one(bot, qdoc, allow_noposter):
     genres = ", ".join(g for g in raw_genres if g in STANDARD_GENRES) or "N/A"
 
     movie_doc = {
-        "_id": base_name,
+        "_id": group_key,
+        "title": title_base,
         "files": files,
         "poster_url": poster,
         "genres": genres,
@@ -233,7 +243,7 @@ async def _post_one(bot, qdoc, allow_noposter):
     except DuplicateKeyError:
         return "skipped"
 
-    msg = await send_movie_update(bot, base_name)
+    msg = await send_movie_update(bot, group_key)
     return "done" if msg else "failed"
 
 
@@ -389,4 +399,4 @@ async def bulkpost_cmd(bot: Client, message: Message):
             "/bulkpost noposter on|off\n"
             "/bulkpost retry\n"
             "/bulkpost clear confirm"
-  )
+)
