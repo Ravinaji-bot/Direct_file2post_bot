@@ -236,7 +236,7 @@ def _process_images(images_data):
     return {'posters': posters_by_lang, 'backdrops': backdrops_by_lang, 'available_languages': languages}
 
 
-async def _fetch_tmdb_data(query: str, api_key=None, file: str = None):
+async def _fetch_tmdb_data(query: str, api_key=None, file: str = None, season: int = None):
     """
     Core TMDB lookup: search → fetch details → build response dict.
     This replaces the external tmdb.blazeposters.workers.dev API call.
@@ -265,6 +265,19 @@ async def _fetch_tmdb_data(query: str, api_key=None, file: str = None):
     images_structured = _process_images(details.get('images', {}))
     images_structured['original_language'] = details.get('original_language')
 
+    # For a TV show, TMDB's main poster is usually the LATEST season's artwork, not the
+    # one for the season this particular file actually belongs to (e.g. a Season 1 (2025)
+    # file could otherwise show Season 2 (2026)'s poster). When we know which season this
+    # file is, fetch that season's own poster and use it instead of the show-level default.
+    season_poster_url = None
+    if media_type == 'tv' and season:
+        try:
+            season_data = await _tmdb_get(f"tv/{media_id}/season/{season}", api_key=api_key)
+            if season_data and season_data.get('poster_path'):
+                season_poster_url = f"{TMDB_IMAGE_BASE_URL}{season_data['poster_path']}"
+        except Exception as e:
+            logger.info(f"Could not fetch season {season} specific poster for tv/{media_id}: {e}")
+
     output_data = {
         'query': query, 'media_type': media_type, 'media_id': media_id,
         'title': details.get('title') or details.get('name'),
@@ -292,7 +305,7 @@ async def _fetch_tmdb_data(query: str, api_key=None, file: str = None):
         'tagline': details.get('tagline'),
         'box_office': details.get('revenue') if details.get('revenue', 0) > 0 else "N/A",
         'distributors': _list_to_str_tmdb(details.get('production_companies', []), key='name'),
-        'poster_url': f"{TMDB_IMAGE_BASE_URL}{details.get('poster_path')}" if details.get('poster_path') else None,
+        'poster_url': season_poster_url or (f"{TMDB_IMAGE_BASE_URL}{details.get('poster_path')}" if details.get('poster_path') else None),
         'url': f"https://www.themoviedb.org/{media_type}/{details.get('id')}",
         'images': images_structured,
     }
@@ -404,14 +417,14 @@ async def get_movie_details(query, bulk=False, id=False, file=None):
     }
 
 
-async def get_movie_detailsx(query, id=False, file=None):
+async def get_movie_detailsx(query, id=False, file=None, season=None):
     """
     Primary movie details fetcher using direct TMDB API calls.
     Falls back to IMDb-based get_movie_details() on failure.
     """
     q = str(query).strip()
     try:
-        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file)
+        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file, season=season)
         if not data:
             logger.info(f"TMDB returned no results for '{q}' → switching to IMDb fallback")
             return await get_movie_details(q)
