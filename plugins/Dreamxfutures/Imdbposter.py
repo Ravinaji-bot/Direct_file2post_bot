@@ -270,13 +270,20 @@ async def _fetch_tmdb_data(query: str, api_key=None, file: str = None, season: i
     # file could otherwise show Season 2 (2026)'s poster). When we know which season this
     # file is, fetch that season's own poster and use it instead of the show-level default.
     season_poster_url = None
+    season_air_date = None
     if media_type == 'tv' and season:
         try:
             season_data = await _tmdb_get(f"tv/{media_id}/season/{season}", api_key=api_key)
-            if season_data and season_data.get('poster_path'):
-                season_poster_url = f"{TMDB_IMAGE_BASE_URL}{season_data['poster_path']}"
+            if season_data:
+                if season_data.get('poster_path'):
+                    season_poster_url = f"{TMDB_IMAGE_BASE_URL}{season_data['poster_path']}"
+                # A show's first_air_date is always season 1's date, so a Season 2/3/...
+                # post would otherwise show the wrong year. Use this season's own
+                # air_date instead whenever TMDB has it.
+                if season_data.get('air_date'):
+                    season_air_date = season_data['air_date']
         except Exception as e:
-            logger.info(f"Could not fetch season {season} specific poster for tv/{media_id}: {e}")
+            logger.info(f"Could not fetch season {season} specific poster/air_date for tv/{media_id}: {e}")
 
     output_data = {
         'query': query, 'media_type': media_type, 'media_id': media_id,
@@ -284,8 +291,8 @@ async def _fetch_tmdb_data(query: str, api_key=None, file: str = None, season: i
         'localized_title': details.get('original_title') or details.get('original_name'),
         'aka': _list_to_str_tmdb(details.get('alternative_titles', {}).get('titles', []), key='title'),
         'kind': media_type,
-        'year': (details.get('release_date') or details.get('first_air_date', ''))[:4],
-        'release_date': details.get('release_date') or details.get('first_air_date'),
+        'year': (season_air_date or details.get('release_date') or details.get('first_air_date', ''))[:4],
+        'release_date': season_air_date or details.get('release_date') or details.get('first_air_date'),
         'imdb_id': details.get('external_ids', {}).get('imdb_id'),
         'tmdb_id': details.get('id'),
         'rating': details.get('vote_average'),
