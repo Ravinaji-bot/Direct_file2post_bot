@@ -236,6 +236,15 @@ def extract_media_info(filename: str, caption: str):
     if not base_name:
         base_name = normalize(remove_ignored_words(normalize(processed_raw))) or filename
 
+    # Safety net: if the title ended up with more than one 4-digit year token
+    # (e.g. "Bakaiti 2026 2025"), keep only the LAST one - it's the one placed
+    # right next to the title by convention - and drop the earlier duplicate(s).
+    year_tokens = list(re.finditer(r'\b(19|20)\d{2}\b', base_name))
+    if len(year_tokens) > 1:
+        keep = year_tokens[-1]
+        cleaned = base_name[:year_tokens[0].start()] + base_name[keep.start():]
+        base_name = re.sub(r'\s+', ' ', cleaned).strip()
+
     return {
         "processed": normalize(processed_raw),
         "base_name": base_name,
@@ -313,7 +322,7 @@ async def _process_with_lock(bot, filename, caption, media_info, base_name, proc
 
     if not movie_doc:
         if TMDB_POSTER:
-            details = await get_movie_detailsx(base_name)
+            details = await get_movie_detailsx(base_name, season=media_info.get("season"))
             if not details or details.get("error") or (not details.get("poster_url") and not details.get("backdrop_url")):
                 error_tmdb=True
                 logger.info("TMDB error switching to IMDB")
