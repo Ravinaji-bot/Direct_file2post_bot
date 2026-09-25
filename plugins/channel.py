@@ -133,6 +133,17 @@ def schedule_update(bot, base_name, delay=5):
         delay,
         lambda: asyncio.create_task(update_movie_message(bot, base_name))
     )
+
+def _series_group_key(base_name, season):
+    """DB key for a series file: each season gets its own key (and therefore
+    its own post) instead of every season of a show sharing one combined post."""
+    if season is None:
+        return base_name
+    try:
+        return f"{base_name} S{int(season):02d}"
+    except (TypeError, ValueError):
+        return f"{base_name} S{season}"
+
 def extract_media_info(filename: str, caption: str):
     filename = normalize(clean_mentions_links(filename).title())
     caption_clean = clean_mentions_links(caption).lower() if caption else ""
@@ -292,19 +303,24 @@ async def process_and_send_update(bot, filename, caption, file_id=None, file_siz
         base_name = media_info["base_name"]
         processed = media_info["processed"]
 
-        lock = locks[base_name]
+        # For series, group/post per season - each season gets its own DB
+        # entry (and therefore its own post) instead of every season of a
+        # show being merged into a single combined post.
+        group_key = _series_group_key(base_name, media_info["season"]) if media_info["tag"] == "#SERIES" else base_name
+
+        lock = locks[group_key]
         async with lock:
-            await _process_with_lock(bot, filename, caption, media_info, base_name, processed, file_id, file_size)
+            await _process_with_lock(bot, filename, caption, media_info, base_name, group_key, processed, file_id, file_size)
     except PyMongoError as e:
         logger.error(f"Database error in process_and_send_update: {e}")
     except Exception as e:
         logger.exception(f"Processing failed in process_and_send_update: {e}")
 
-async def _process_with_lock(bot, filename, caption, media_info, base_name, processed, file_id=None, file_size=0):
+async def _process_with_lock(bot, filename, caption, media_info, base_name, group_key, processed, file_id=None, file_size=0):
     if not hasattr(db, 'movie_updates'):
         db.movie_updates = db.db.movie_updates
 
-    movie_doc = await db.movie_updates.find_one({"_id": base_name})
+    movie_doc = await db.movie_updates.find_one({"_id": group_key})
     error_tmdb=False
     file_data = {
         "filename": filename,
@@ -337,7 +353,8 @@ async def _process_with_lock(bot, filename, caption, media_info, base_name, proc
         else:
             genres = ", ".join(g for g in raw_genres if g in STANDARD_GENRES) or "N/A"
         movie_doc = {
-            "_id": base_name,
+            "_id": group_key,
+            "title": base_name,
             "files": [file_data],
             "poster_url": details.get("backdrop_url") if LANDSCAPE_POSTER and TMDB_POSTER and details.get("backdrop_url") and not error_tmdb else details.get("poster_url"),
             "genres": genres,
@@ -353,28 +370,28 @@ async def _process_with_lock(bot, filename, caption, media_info, base_name, proc
         }
         try:
             await db.movie_updates.insert_one(movie_doc)
-            await send_movie_update(bot, base_name)
-            movie_doc = await db.movie_updates.find_one({"_id": base_name})
+            await send_movie_update(bot, group_key)
+            movie_doc = await db.movie_updates.find_one({"_id": group_key})
         except DuplicateKeyError:
-            movie_doc = await db.movie_updates.find_one({"_id": base_name})
+            movie_doc = await db.movie_updates.find_one({"_id": group_key})
             if movie_doc:
                 if any(f["filename"] == filename for f in movie_doc["files"]):
                     return
                 await db.movie_updates.update_one(
-                    {"_id": base_name},
+                    {"_id": group_key},
                     {"$push": {"files": file_data}}
                 )
                 movie_doc["files"].append(file_data)
-                schedule_update(bot, base_name)
+                schedule_update(bot, group_key)
     else:
         if any(f["filename"] == filename for f in movie_doc["files"]):
             return
         await db.movie_updates.update_one(
-            {"_id": base_name},
+            {"_id": group_key},
             {"$push": {"files": file_data}}
         )
         movie_doc["files"].append(file_data)
-        schedule_update(bot, base_name)
+        schedule_update(bot, group_key)
 
 async def send_movie_update(bot, base_name):
     max_retries = 3
@@ -667,9 +684,17 @@ def build_post_caption(movie_doc, base_name, fmt=None):
     ott_str = ", ".join(sorted(all_ott)) if all_ott else "N/A"
 
     year_val = str(movie_doc.get("year") or "").strip()
-    title = base_name.strip()
-    if year_val and title.endswith(year_val):
-        title = title[: -len(year_val)].strip()
+    title = str(movie_doc.get("title") or base_name).strip()
+    # Strip a trailing 4-digit year token from the title (not just an exact
+    # match of year_val) - a wrong/extra year picked up from the filename
+    # (e.g. "Bakaiti 2026" when TMDB's real year is 2025) used to survive
+    # this check and print twice ("Bakaiti 2026 2025"). Now we always drop
+    # whatever year is baked into the title and re-add the canonical one below.
+    # Guard: only strip if something is left afterwards, so a movie whose
+    # actual title IS a year (e.g. "1917", "2012", "1984") is never emptied out.
+    _stripped_title = re.sub(r"\s*\(?\b(19|20)\d{2}\b\)?\s*$", "", title).strip()
+    if _stripped_title:
+        title = _stripped_title
 
     source_tokens = set()
     for f in files:
@@ -692,14 +717,16 @@ def build_post_caption(movie_doc, base_name, fmt=None):
 
     if is_series:
         combined_tag = " #Combined" if any("combined" in (f.get("filename") or "").lower() for f in files) else ""
+        header_parts = [title_emoji, title]
+        if year_val:
+            header_parts.append(year_val)
         if len(seasons_present) == 1:
             season_num = next(iter(seasons_present))
             try:
-                header_title = f"{title_emoji} {title} S{int(season_num):02d}{combined_tag}"
+                header_parts.append(f"[Season {int(season_num):02d}]")
             except (TypeError, ValueError):
-                header_title = f"{title_emoji} {title} S{season_num}{combined_tag}"
-        else:
-            header_title = f"{title_emoji} {title}{combined_tag}"
+                header_parts.append(f"[Season {season_num}]")
+        header_title = " ".join(header_parts) + combined_tag
 
         lines += [header_title, divider, info_block, divider, ""]
 
