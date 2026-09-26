@@ -6,7 +6,7 @@ import logging
 from io import BytesIO
 from datetime import datetime
 from difflib import SequenceMatcher
-from PIL import Image
+from PIL import Image, ImageFilter, ImageEnhance
 from info import DREAMXBOTZ_IMAGE_FETCH, TMDB_API_KEY, MAX_LIST_ELM
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ async def get_session():
         )
     return _session
 
-async def fetch_image(url, size=(860, 1200)):
+async def fetch_image(url, size=(2560, 1440)):
     if not DREAMXBOTZ_IMAGE_FETCH:
         logger.info("Image fetching is disabled.")
         return url
@@ -48,11 +48,11 @@ async def fetch_image(url, size=(860, 1200)):
                 return None
 
             data = await response.read()
-            img = Image.open(BytesIO(data))
-            img = img.resize(size, Image.LANCZOS)
+            img = Image.open(BytesIO(data)).convert("RGB")
+            canvas = _to_landscape_canvas(img, size)
 
             out = BytesIO()
-            img.save(out, format="JPEG")
+            canvas.save(out, format="JPEG", quality=92)
             out.seek(0)
             return out
 
@@ -64,6 +64,81 @@ async def fetch_image(url, size=(860, 1200)):
         logger.error(f"Unexpected error in fetch_image: {e}")
 
     return None
+
+
+def _to_landscape_canvas(img: "Image.Image", size=(2560, 1440)) -> "Image.Image":
+    """Always returns a landscape image of exactly `size`, without ever
+    stretching the source out of shape.
+
+    - A source that's already landscape-ish (e.g. a TMDB backdrop, or a
+      16:9 video thumbnail) is simply cover-cropped/resized to fill `size`.
+    - A source that's portrait (a normal movie poster, or a portrait video
+      thumbnail) is placed on top of a blurred, darkened, cover-scaled copy
+      of itself that fills the rest of the landscape canvas - this is the
+      same "poster on a blurred backdrop" look used by most streaming apps,
+      so nothing ever looks horizontally squashed.
+    """
+    target_w, target_h = size
+    target_ratio = target_w / target_h
+    img_ratio = img.width / img.height
+
+    if img_ratio >= target_ratio * 0.9:
+        # Landscape-ish already -> cover-crop to the exact target size.
+        scale = max(target_w / img.width, target_h / img.height)
+        resized = img.resize(
+            (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+            Image.LANCZOS,
+        )
+        left = (resized.width - target_w) // 2
+        top = (resized.height - target_h) // 2
+        return resized.crop((left, top, left + target_w, top + target_h))
+
+    # Portrait source -> letterbox it on a blurred version of itself.
+    bg_scale = max(target_w / img.width, target_h / img.height)
+    bg = img.resize(
+        (max(1, round(img.width * bg_scale)), max(1, round(img.height * bg_scale))),
+        Image.LANCZOS,
+    )
+    bg = bg.filter(ImageFilter.GaussianBlur(40))
+    bleft = (bg.width - target_w) // 2
+    btop = (bg.height - target_h) // 2
+    bg = bg.crop((bleft, btop, bleft + target_w, btop + target_h))
+    bg = ImageEnhance.Brightness(bg).enhance(0.5)
+
+    fg_h = target_h
+    fg_w = round(img.width * (fg_h / img.height))
+    if fg_w > target_w:
+        fg_w = target_w
+        fg_h = round(img.height * (fg_w / img.width))
+    fg = img.resize((max(1, fg_w), max(1, fg_h)), Image.LANCZOS)
+    fx = (target_w - fg.width) // 2
+    fy = (target_h - fg.height) // 2
+    bg.paste(fg, (fx, fy))
+    return bg
+
+
+async def build_poster_from_telegram_thumb(bot, file_id, size=(2560, 1440)):
+    """Last-resort poster: used only when TMDB/IMDb have no poster or backdrop
+    at all for a title. Downloads the thumbnail Telegram already generated for
+    the uploaded video file (or one the uploader manually attached) and turns
+    it into a proper landscape image, instead of posting with no image at all.
+    """
+    if not file_id:
+        return None
+    try:
+        buf = await bot.download_media(file_id, in_memory=True)
+        if not buf:
+            return None
+        buf.seek(0)
+        img = Image.open(buf).convert("RGB")
+        canvas = _to_landscape_canvas(img, size)
+        out = BytesIO()
+        canvas.save(out, format="JPEG", quality=90)
+        out.seek(0)
+        return out
+    except Exception as e:
+        logger.error(f"Failed to build fallback poster from video thumbnail: {e}")
+        return None
 
 
 async def close_session():
@@ -135,15 +210,31 @@ async def _fetch_media_details(media_type: str, media_id: int, api_key=None):
     return await _tmdb_get(f"{media_type}/{media_id}", params=params, api_key=api_key)
 
 
-async def _search_media_id(query: str, api_key=None, file: str = None):
-    """Search TMDB for the best matching movie/TV show and return (media_type, media_id)."""
+async def _search_media_id(query: str, api_key=None, file: str = None, is_series: bool | None = None):
+    """Search TMDB for the best matching movie/TV show and return (media_type, media_id).
+
+    is_series:
+      - True  -> caller has confirmed (e.g. found "S08E04" or a bare "S01" in
+                 the filename) this is definitely a TV series: only 'tv'
+                 results are considered.
+      - False -> caller has confirmed there is NO season/episode marker at
+                 all in the filename, so this is definitely a movie: only
+                 'movie' results are considered.
+      - None  -> caller doesn't know either way (e.g. a plain title typed
+                 into a generic search command with no filename context);
+                 falls back to guessing from a regex on the query/file, same
+                 as before, WITHOUT the strict movie-only filter below (so a
+                 TV show searched by bare name still matches correctly).
+    """
     title, year = _extract_title_and_year(query)
 
-    # If the filename has a season/episode marker (e.g. "S05E01", "Season 5"), this is
-    # unambiguously a TV series - restrict results to 'tv' only, so a movie that
-    # happens to share the exact same title (e.g. "Lucifer" the Malayalam film vs
-    # "Lucifer" the TV series) never gets picked by mistake.
-    is_series = bool(re.search(r'[Ss]\d{1,2}\s?[Ee]\d{1,3}|\bSeason\s?\d{1,2}\b', file or query, re.IGNORECASE))
+    # Caller explicitly told us the type -> trust it completely and filter
+    # strictly. Otherwise fall back to the old regex-based guess (kept lenient
+    # on purpose - it's used by generic search paths that don't have a real
+    # filename to check).
+    explicit = is_series is not None
+    if is_series is None:
+        is_series = bool(re.search(r'[Ss]\d{1,2}\s?[Ee]\d{1,3}|\bSeason\s?\d{1,2}\b|\bS\d{1,2}\b', file or query, re.IGNORECASE))
 
     multi_results = []
     words = title.split()
@@ -189,6 +280,11 @@ async def _search_media_id(query: str, api_key=None, file: str = None):
         mtype = r.get('media_type')
         if is_series and mtype != 'tv':
             continue
+        # Symmetric case: caller explicitly confirmed there's no season/episode
+        # marker anywhere -> definitely a movie, so don't let a same-named TV
+        # show sneak in through the year-proximity check below.
+        if explicit and not is_series and mtype != 'movie':
+            continue
         rd_str = r.get('release_date') or r.get('first_air_date')
         if not (rd_str and mtype in ['movie', 'tv']):
             continue
@@ -209,11 +305,20 @@ async def _search_media_id(query: str, api_key=None, file: str = None):
                     continue
             except Exception:
                 continue
-        candidate = {'type': mtype, 'id': r['id'], 'date': rd_date, 'score': r.get('popularity', 0), 'ratio': ratio}
+        # Whether THIS candidate's own year exactly matches the year the filename
+        # told us (e.g. "War 2019" -> only a 2019 "War" should win) - this is
+        # ranked above raw popularity/recency, since name+year together is what
+        # actually identifies the correct movie when multiple share a title.
+        year_exact = (year is not None and rd_date.year == year)
+        candidate = {'type': mtype, 'id': r['id'], 'date': rd_date, 'score': r.get('popularity', 0), 'ratio': ratio, 'year_exact': year_exact}
         (candidates_upcoming if rd_date > today else candidates_past).append(candidate)
 
-    candidates_past.sort(key=lambda x: (x['ratio'], x['date'], x['score']), reverse=True)
-    candidates_upcoming.sort(key=lambda x: (x['ratio'], x['date'], x['score']), reverse=True)
+    # Sort priority: title-match strength first, then an EXACT year match
+    # (not just "closer date"), then popularity. Sorting by raw date here used
+    # to mean the more recent of two similarly-titled results could win even
+    # when the OTHER one was the exact year from the filename - fixed now.
+    candidates_past.sort(key=lambda x: (x['ratio'], x['year_exact'], x['score']), reverse=True)
+    candidates_upcoming.sort(key=lambda x: (x['ratio'], x['year_exact'], x['score']), reverse=True)
     final = candidates_past or candidates_upcoming
     if not final:
         return None, None
@@ -236,12 +341,12 @@ def _process_images(images_data):
     return {'posters': posters_by_lang, 'backdrops': backdrops_by_lang, 'available_languages': languages}
 
 
-async def _fetch_tmdb_data(query: str, api_key=None, file: str = None, season: int = None):
+async def _fetch_tmdb_data(query: str, api_key=None, file: str = None, season: int = None, is_series: bool | None = None):
     """
     Core TMDB lookup: search → fetch details → build response dict.
     This replaces the external tmdb.blazeposters.workers.dev API call.
     """
-    media_type, media_id = await _search_media_id(query, api_key=api_key, file=file)
+    media_type, media_id = await _search_media_id(query, api_key=api_key, file=file, is_series=is_series)
     if not media_id:
         return None
 
@@ -424,14 +529,14 @@ async def get_movie_details(query, bulk=False, id=False, file=None):
     }
 
 
-async def get_movie_detailsx(query, id=False, file=None, season=None):
+async def get_movie_detailsx(query, id=False, file=None, season=None, is_series=None):
     """
     Primary movie details fetcher using direct TMDB API calls.
     Falls back to IMDb-based get_movie_details() on failure.
     """
     q = str(query).strip()
     try:
-        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file, season=season)
+        data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file, season=season, is_series=is_series)
         if not data:
             logger.info(f"TMDB returned no results for '{q}' → switching to IMDb fallback")
             return await get_movie_details(q)
