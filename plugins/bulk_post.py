@@ -36,7 +36,7 @@ from pyrogram.types import Message
 
 from database.ia_filterdb import Media, Media2
 from database.users_chats_db import db
-from info import ADMINS, MULTIPLE_DB, TMDB_POSTER, LANDSCAPE_POSTER
+from info import ADMINS, MULTIPLE_DB, TMDB_POSTER
 from plugins.channel import (
     extract_media_info,
     send_movie_update,
@@ -88,7 +88,7 @@ async def _scan(bot, chat_id):
             sources.append(Media2.collection)
 
         for col in sources:
-            cursor = col.find({}, {"file_name": 1, "caption": 1, "file_size": 1})
+            cursor = col.find({}, {"file_name": 1, "caption": 1, "file_size": 1, "cover": 1})
             async for doc in cursor:
                 seen += 1
                 try:
@@ -121,6 +121,10 @@ async def _scan(bot, chat_id):
                     "episode": info["episode"],
                     "file_id": doc["_id"],
                     "file_size": doc.get("file_size") or 0,
+                    # This file's own Telegram cover/thumbnail, already saved at
+                    # index time (COVERX) - reused as a last-resort poster if
+                    # TMDB/IMDb have nothing for this title at all.
+                    "cover": doc.get("cover"),
                 }
                 ops.append(UpdateOne(
                     {"_id": group_key},
@@ -194,9 +198,15 @@ async def _post_one(bot, qdoc, allow_noposter):
 
     error_tmdb = False
     details = {}
+    # First file's season tells us definitively whether this is a series
+    # (matches the same detection channel.py already uses for live uploads) -
+    # restricts TMDB search to the right media type and fetches the right
+    # season's own poster/year instead of the show's overall one.
+    season_num = next((f.get("season") for f in files if f.get("season") is not None), None)
+    is_series_hint = (qdoc.get("tag") == "#SERIES") or (season_num is not None)
     try:
         if TMDB_POSTER:
-            details = await get_movie_detailsx(title_base)
+            details = await get_movie_detailsx(title_base, season=season_num, is_series=is_series_hint)
             if not details or details.get("error") or (
                 not details.get("poster_url") and not details.get("backdrop_url")
             ):
@@ -209,12 +219,15 @@ async def _post_one(bot, qdoc, allow_noposter):
         error_tmdb = True
         details = {}
 
-    poster = (
-        details.get("backdrop_url")
-        if LANDSCAPE_POSTER and TMDB_POSTER and details.get("backdrop_url") and not error_tmdb
-        else details.get("poster_url")
-    )
-    if not poster and not allow_noposter:
+    # Posters always come out landscape now (fetch_image letterboxes a
+    # portrait source onto a landscape canvas - see Imdbposter.py), so prefer
+    # a real backdrop when TMDB has one since it's naturally landscape,
+    # falling back to the portrait poster only if there's no backdrop at all.
+    poster = (details.get("backdrop_url") if TMDB_POSTER and not error_tmdb else None) or details.get("poster_url")
+    # No poster/backdrop anywhere -> fall back to one of these old files' own
+    # saved cover/thumbnail instead of skipping/posting with no image.
+    fallback_thumb = None if poster else next((f.get("cover") for f in files if f.get("cover")), None)
+    if not poster and not fallback_thumb and not allow_noposter:
         return "noposter"
 
     raw_genres = details.get("genres", "N/A")
@@ -236,7 +249,8 @@ async def _post_one(bot, qdoc, allow_noposter):
         "message_id": None,
         "is_photo": False,
         "error_tmdb": error_tmdb,
-        "is_backdrop": details.get("backdrop_url"),
+        "is_backdrop": bool(details.get("backdrop_url")),
+        "fallback_thumb_file_id": fallback_thumb,
     }
     try:
         await mu.insert_one(movie_doc)
