@@ -497,6 +497,35 @@ async def get_posterx(query, bulk=False, id=False, file=None):
         'url': details.get('tmdb_url')
     }
 
+_LANG_WORDS = {
+    "hindi": "Hindi", "hin": "Hindi",
+    "english": "English", "eng": "English",
+    "tamil": "Tamil", "tam": "Tamil",
+    "telugu": "Telugu", "tel": "Telugu",
+    "kannada": "Kannada", "kan": "Kannada",
+    "malayalam": "Malayalam", "mal": "Malayalam",
+    "punjabi": "Punjabi", "pun": "Punjabi",
+    "bengali": "Bengali", "marathi": "Marathi",
+    "gujarati": "Gujarati", "guj": "Gujarati",
+    "urdu": "Urdu", "urd": "Urdu",
+    "korean": "Korean", "kor": "Korean",
+    "japanese": "Japanese", "jpn": "Japanese",
+    "chinese": "Chinese", "spanish": "Spanish",
+    "french": "French", "german": "German",
+}
+
+
+def get_languages_html(file_name, caption=None):
+    """Detects audio languages from the file name + original caption and returns
+    one <blockquote>🔊 #Language</blockquote> block per language (empty string if none)."""
+    text = f"{file_name or ''} {re.sub(r'<[^>]+>', ' ', caption or '')}".lower()
+    found = []
+    for word in re.findall(r"[a-z]+", text):
+        lang = _LANG_WORDS.get(word)
+        if lang and lang not in found:
+            found.append(lang)
+    return "\n".join(f"<blockquote>🔊 #{l}</blockquote>" for l in found)
+
 
 async def get_landscape_thumb(filename):
     """
