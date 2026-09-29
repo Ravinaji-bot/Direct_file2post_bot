@@ -28,11 +28,11 @@ MIN_RUNTIME = 40
 _session: aiohttp.ClientSession | None = None
 
 # --- Poster watermark settings (edit here to change look/position) ---
-WATERMARK_TEXT = "@DragonFireWord"
+WATERMARK_TEXT = "@DragonFireWorld"
 WATERMARK_COLOR = (255, 255, 255)      # white text
 WATERMARK_STROKE_COLOR = (0, 0, 0)     # black border
 WATERMARK_Y_RATIO = 0.10               # 0.10 = 10% from the top of the image
-WATERMARK_SIZE_RATIO = 0.055           # font height as a share of image height
+WATERMARK_SIZE_RATIO = 0.07           # font height as a share of image height
 WATERMARK_FONT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "fonts", "Poppins-Bold.ttf"
 )
