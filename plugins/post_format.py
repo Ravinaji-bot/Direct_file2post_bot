@@ -11,13 +11,17 @@ Commands (admin only):
     /setlinktext <text>  - sets the clickable link text (default: Click Hare)
     /setdivider <text>   - sets the ──── divider line
     /resetpostformat     - resets everything back to defaults
+    /repost <title>      - deletes the old post for that title in the
+                            update channel (if it still exists) and sends a
+                            brand-new one, no manual deleting required
 """
+import re as _re
 import logging
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from info import ADMINS
+from info import ADMINS, MOVIE_UPDATE_CHANNEL
 from database.users_chats_db import db
-from plugins.channel import DEFAULT_POST_FORMAT, _POST_FORMAT_KEYS, get_post_format
+from plugins.channel import DEFAULT_POST_FORMAT, _POST_FORMAT_KEYS, get_post_format, send_movie_update
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,8 @@ def _settings_text(fmt: dict) -> str:
     bold_status = "Bold ✅" if fmt["bold"] else "Bold ❌"
     layout_status = "2-line (✧ style)" if fmt["layout"] == "twoline" else "1-line (compact)"
     box_status = "ON ✅ (quote-box)" if fmt.get("header_box") else "OFF ❌ (plain lines)"
-    spoiler_status = "ON ✅ (blurred)" if fmt.get("spoiler") else "OFF ❌"
+    links_box_status = "ON ✅ (quote-box)" if fmt.get("links_box") else "OFF ❌ (plain lines)"
+    watermark_box_status = "ON ✅ (quote-box)" if fmt.get("watermark_box") else "OFF ❌ (plain line)"
     if fmt.get("button_text") and fmt.get("button_url"):
         button_status = f"{fmt['button_text']} → {fmt['button_url']}"
     else:
@@ -36,7 +41,8 @@ def _settings_text(fmt: dict) -> str:
         f"<b>Bold text:</b> {bold_status}\n"
         f"<b>Layout:</b> {layout_status}\n"
         f"<b>Header box:</b> {box_status}\n"
-        f"<b>Poster spoiler:</b> {spoiler_status}\n"
+        f"<b>Links box:</b> {links_box_status}\n"
+        f"<b>Watermark box:</b> {watermark_box_status}\n"
         f"<b>Link text:</b> {fmt['link_text']}\n"
         f"<b>Divider:</b> <code>{fmt['divider']}</code>\n"
         f"<b>Title emoji:</b> {fmt['title_emoji']}\n"
@@ -74,8 +80,14 @@ def _settings_buttons(fmt: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                "Poster spoiler: ON ✅" if fmt.get("spoiler") else "Poster spoiler: OFF ❌",
-                callback_data="pfmt_spoiler"
+                "Links box: ON ✅" if fmt.get("links_box") else "Links box: OFF ❌",
+                callback_data="pfmt_linksbox"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "Watermark box: ON ✅" if fmt.get("watermark_box") else "Watermark box: OFF ❌",
+                callback_data="pfmt_watermarkbox"
             )
         ],
         [InlineKeyboardButton("🔄 Refresh", callback_data="pfmt_refresh")]
@@ -110,10 +122,14 @@ async def post_settings_callback(bot: Client, query: CallbackQuery):
         current = await get_post_format(bot_id)
         await db.update_bot_setting(bot_id, _POST_FORMAT_KEYS["header_box"], not current.get("header_box"))
         await query.answer("Header box toggled!")
-    elif action == "spoiler":
+    elif action == "linksbox":
         current = await get_post_format(bot_id)
-        await db.update_bot_setting(bot_id, _POST_FORMAT_KEYS["spoiler"], not current.get("spoiler"))
-        await query.answer("Poster spoiler toggled!")
+        await db.update_bot_setting(bot_id, _POST_FORMAT_KEYS["links_box"], not current.get("links_box"))
+        await query.answer("Links box toggled!")
+    elif action == "watermarkbox":
+        current = await get_post_format(bot_id)
+        await db.update_bot_setting(bot_id, _POST_FORMAT_KEYS["watermark_box"], not current.get("watermark_box"))
+        await query.answer("Watermark box toggled!")
     elif action == "refresh":
         await query.answer("Refreshed")
 
@@ -199,3 +215,60 @@ async def reset_post_format_cmd(bot: Client, message: Message):
     for key, db_key in _POST_FORMAT_KEYS.items():
         await db.update_bot_setting(bot_id, db_key, DEFAULT_POST_FORMAT[key])
     await message.reply_text("✅ Post format reset to defaults.")
+
+
+@Client.on_message(filters.command("repost") & filters.user(ADMINS))
+async def repost_cmd(bot: Client, message: Message):
+    """Force a fresh, brand-new post for a title that was already posted to
+    MOVIE_UPDATE_CHANNEL. Deletes the old channel message itself (no need to
+    do it by hand) and sends a new one, using build_post_caption / the
+    current /postsettings just like a normal auto-post."""
+    if len(message.command) < 2:
+        await message.reply_text(
+            "Usage: <code>/repost movie or series title</code>\n\n"
+            "This finds that title's existing post in the update channel, "
+            "deletes it (if it's still there), and sends a brand-new post "
+            "for it — no need to delete anything by hand.",
+            parse_mode=enums.ParseMode.HTML
+        )
+        return
+
+    query = message.text.split(None, 1)[1].strip()
+    if not hasattr(db, 'movie_updates'):
+        db.movie_updates = db.db.movie_updates
+
+    cursor = db.movie_updates.find({"_id": {"$regex": _re.escape(query), "$options": "i"}})
+    matches = [doc async for doc in cursor]
+
+    if not matches:
+        await message.reply_text("No matching title found for that update-channel post.")
+        return
+
+    if len(matches) > 1:
+        titles = "\n".join(f"• {m['_id']}" for m in matches[:15])
+        await message.reply_text(
+            f"Multiple matches found, please be more specific:\n\n{titles}"
+        )
+        return
+
+    movie_doc = matches[0]
+    base_name = movie_doc["_id"]
+    old_message_id = movie_doc.get("message_id")
+
+    if old_message_id:
+        try:
+            await bot.delete_messages(chat_id=MOVIE_UPDATE_CHANNEL, message_ids=old_message_id)
+        except Exception as e:
+            logger.warning(f"Could not delete old post for {base_name} (may already be gone): {e}")
+
+    await db.movie_updates.update_one(
+        {"_id": base_name},
+        {"$set": {"message_id": None, "is_photo": False}}
+    )
+
+    status = await message.reply_text(f"⏳ Re-posting <b>{base_name}</b> ...", parse_mode=enums.ParseMode.HTML)
+    msg = await send_movie_update(bot, base_name)
+    if msg:
+        await status.edit_text(f"✅ Re-posted: <b>{base_name}</b>", parse_mode=enums.ParseMode.HTML)
+    else:
+        await status.edit_text(f"⚠️ Could not re-post <b>{base_name}</b>. Check the bot logs.", parse_mode=enums.ParseMode.HTML)
