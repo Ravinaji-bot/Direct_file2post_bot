@@ -4,6 +4,9 @@ import math
 import logging
 import secrets
 import mimetypes
+import base64
+from collections import OrderedDict
+from urllib.parse import urlparse
 from aiohttp.http_exceptions import BadStatusLine
 from dreamxbotz.Bot import multi_clients, work_loads
 from dreamxbotz.server.exceptions import FIleNotFound, InvalidHash
@@ -45,7 +48,50 @@ async def watch_handler(request: web.Request):
     except Exception as e:
         logger.critical(e.with_traceback(None))
         raise web.HTTPInternalServerError(text=str(e))
+_LP_ALLOWED_HOSTS = ("tmdb.org", "media-amazon.com", "ssl-images-amazon.com")
+_LP_CACHE = OrderedDict()
+_LP_CACHE_MAX = 200
 
+
+def _lp_host_ok(url: str) -> bool:
+    try:
+        u = urlparse(url)
+        host = (u.hostname or "").lower()
+        return u.scheme in ("http", "https") and any(
+            host == h or host.endswith("." + h) for h in _LP_ALLOWED_HOSTS
+        )
+    except Exception:
+        return False
+
+
+@routes.get(r"/lp/{token}.jpg", allow_head=True)
+async def landscape_preview_handler(request: web.Request):
+    token = request.match_info["token"]
+    try:
+        src = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+    except Exception:
+        raise web.HTTPNotFound(text="Not found")
+    if not _lp_host_ok(src):
+        raise web.HTTPForbidden(text="Host not allowed")
+
+    data = _LP_CACHE.get(src)
+    if data is None:
+        from plugins.Dreamxfutures.Imdbposter import fetch_image
+        buf = await fetch_image(src, (1280, 720))
+        if buf is None or isinstance(buf, str):
+            raise web.HTTPFound(src)
+        data = buf.getvalue()
+        _LP_CACHE[src] = data
+        while len(_LP_CACHE) > _LP_CACHE_MAX:
+            _LP_CACHE.popitem(last=False)
+    else:
+        _LP_CACHE.move_to_end(src)
+
+    return web.Response(
+        body=data,
+        content_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 @routes.get(r"/{path:\S+}", allow_head=True)
 async def stream_handler(request: web.Request):
     try:
