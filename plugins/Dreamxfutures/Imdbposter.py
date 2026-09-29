@@ -6,7 +6,8 @@ import logging
 from io import BytesIO
 from datetime import datetime
 from difflib import SequenceMatcher
-from PIL import Image, ImageFilter, ImageEnhance
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
+import os
 from info import DREAMXBOTZ_IMAGE_FETCH, TMDB_API_KEY, MAX_LIST_ELM
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,46 @@ TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/original'
 MIN_RUNTIME = 40
 
 _session: aiohttp.ClientSession | None = None
+
+# --- Poster watermark settings (edit here to change look/position) ---
+WATERMARK_TEXT = "@DragonFireWord"
+WATERMARK_COLOR = (255, 255, 255)      # white text
+WATERMARK_STROKE_COLOR = (0, 0, 0)     # black border
+WATERMARK_Y_RATIO = 0.10               # 0.10 = 10% from the top of the image
+WATERMARK_SIZE_RATIO = 0.055           # font height as a share of image height
+WATERMARK_FONT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "fonts", "Poppins-Bold.ttf"
+)
+
+
+def add_watermark(img: "Image.Image") -> "Image.Image":
+    """Writes WATERMARK_TEXT horizontally centred, at WATERMARK_Y_RATIO of the
+    image height, in white with a black border. Never raises - if anything
+    fails the original image is returned untouched."""
+    if not WATERMARK_TEXT:
+        return img
+    try:
+        w, h = img.size
+        font_size = max(12, int(h * WATERMARK_SIZE_RATIO))
+        try:
+            font = ImageFont.truetype(WATERMARK_FONT_PATH, font_size)
+        except Exception:
+            font = ImageFont.load_default(size=font_size)
+        stroke = max(2, font_size // 8)
+        draw = ImageDraw.Draw(img)
+        draw.text(
+            (w / 2, h * WATERMARK_Y_RATIO),
+            WATERMARK_TEXT,
+            font=font,
+            fill=WATERMARK_COLOR,
+            stroke_width=stroke,
+            stroke_fill=WATERMARK_STROKE_COLOR,
+            anchor="mm",
+        )
+    except Exception as e:
+        logger.error(f"Watermark failed: {e}")
+    return img
+
 
 async def get_session():
     global _session
@@ -49,7 +90,7 @@ async def fetch_image(url, size=(2560, 1440)):
 
             data = await response.read()
             img = Image.open(BytesIO(data)).convert("RGB")
-            canvas = _to_landscape_canvas(img, size)
+            canvas = add_watermark(_to_landscape_canvas(img, size))
 
             out = BytesIO()
             canvas.save(out, format="JPEG", quality=92)
@@ -131,7 +172,7 @@ async def build_poster_from_telegram_thumb(bot, file_id, size=(2560, 1440)):
             return None
         buf.seek(0)
         img = Image.open(buf).convert("RGB")
-        canvas = _to_landscape_canvas(img, size)
+        canvas = add_watermark(_to_landscape_canvas(img, size))
         out = BytesIO()
         canvas.save(out, format="JPEG", quality=90)
         out.seek(0)
