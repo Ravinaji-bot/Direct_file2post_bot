@@ -62,6 +62,8 @@ async def _deliver_file(client, chat_id, files1, file_id, caption, btn, protect_
             )
         except Exception as e:
             logger.warning(f"send_video with poster cover failed, falling back: {e}")
+            if hasattr(final_cover, "seek"):
+                final_cover.seek(0)
     return await client.send_cached_media(chat_id=chat_id, file_id=file_id, cover=final_cover, caption=caption, protect_content=protect_content, reply_markup=InlineKeyboardMarkup(btn))
 
 
