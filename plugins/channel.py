@@ -2,6 +2,7 @@ import re
 import logging
 import asyncio
 import uuid
+import base64
 from datetime import datetime
 from collections import defaultdict
 from plugins.Dreamxfutures.Imdbposter import get_movie_detailsx, fetch_image, get_movie_details, build_poster_from_telegram_thumb
@@ -419,7 +420,13 @@ async def _process_with_lock(bot, filename, caption, media_info, base_name, grou
         )
         movie_doc["files"].append(file_data)
         schedule_update(bot, group_key)
-
+def preview_url(poster_url):
+    if not poster_url:
+        return poster_url
+    if not FQDN or FQDN.startswith(("0.0.0.0", "127.", "localhost")):
+        return poster_url
+    token = base64.urlsafe_b64encode(poster_url.encode()).decode().rstrip("=")
+    return f"{URL}lp/{token}.jpg"
 async def send_movie_update(bot, base_name):
     max_retries = 3
     for attempt in range(max_retries):
