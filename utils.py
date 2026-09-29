@@ -515,7 +515,16 @@ async def get_landscape_thumb(filename):
         if not imdb_data:
             return None
         img_url = imdb_data.get('backdrop') or imdb_data.get('poster')
-        return img_url or None
+        if not img_url:
+            return None
+        # Same landscape + watermark (Imdbposter.WATERMARK_TEXT) as the channel posts.
+        from plugins.Dreamxfutures.Imdbposter import fetch_image
+        buf = await fetch_image(img_url, (1280, 720))
+        if buf is None:
+            return img_url
+        if not isinstance(buf, str):
+            buf.name = "cover.jpg"
+        return buf
     except Exception as e:
         logger.warning(f"get_landscape_thumb failed: {e}")
         return None
