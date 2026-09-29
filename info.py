@@ -94,7 +94,7 @@ MOVIE_UPDATE_NOTIFICATION = is_enabled(environ.get('MOVIE_UPDATE_NOTIFICATION', 
 MOVIE_UPDATE_CHANNEL = int(environ.get('MOVIE_UPDATE_CHANNEL', '-100'))  # Notification of sent to your channel
 DREAMXBOTZ_IMAGE_FETCH = is_enabled(environ.get('DREAMXBOTZ_IMAGE_FETCH', "True"), True)  # On (True) / Off (False)
 LINK_PREVIEW = is_enabled(environ.get('LINK_PREVIEW', "False"), False) # Shows link preview in notification msg instead of image
-ABOVE_PREVIEW = is_enabled(environ.get('ABOVE_PREVIEW', "True"), True) # Shows link preview above the text in notification msg if True else below the msg
+ABOVE_PREVIEW = is_enabled(environ.get('ABOVE_PREVIEW', "False"), False) # True = poster shows ABOVE the text, False = poster shows BELOW the text
 TMDB_API_KEY = environ.get('TMDB_API_KEY', '') # preffer to use your own tmdb API Key get it from https://www.themoviedb.org/settings/api
 TMDB_POSTER = is_enabled(environ.get('TMDB_POSTER', "True"), True) # Shows TMDB poster in notification msg
 LANDSCAPE_POSTER = is_enabled(environ.get('LANDSCAPE_POSTER', "True"), True) # Shows landscape poster in notification msg
