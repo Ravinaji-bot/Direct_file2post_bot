@@ -25,7 +25,7 @@ from info import (
     LOG_CHANNEL, SHORTENER_API, SHORTENER_API2, SHORTENER_API3, SHORTENER_WEBSITE, SHORTENER_WEBSITE2, SHORTENER_WEBSITE3,
     TMDB_POSTER,
 )
-from utils import get_settings, save_group_settings, is_subscribed, is_req_subscribed, get_size, get_shortlink, is_check_admin, temp, get_readable_time, get_time, generate_settings_text, log_error, clean_filename, get_random_mix_id, get_poster, get_posterx, get_landscape_thumb
+from utils import get_settings, save_group_settings, is_subscribed, is_req_subscribed, get_size, get_shortlink, is_check_admin, temp, get_readable_time, get_time, generate_settings_text, log_error, clean_filename, get_random_mix_id, get_poster, get_posterx, , get_languages_html
 from plugins.channel import extract_media_info, build_post_caption, build_post_buttons, get_post_format
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,13 @@ async def _deliver_file(client, chat_id, files1, file_id, caption, btn, protect_
             logger.warning(f"poster_thumb fetch failed: {e}")
             poster_cover = None
     final_cover = poster_cover or cover
-
+# Add language blocks (🔊 #Hindi / 🔊 #English) right under the title line
+    if caption and "🔊" not in caption:
+        langs = get_languages_html(files1.file_name, files1.caption)
+        if langs:
+            first, sep, rest = caption.partition("\n\n")
+            caption = f"{first}\n\n{langs}\n\n{rest}" if sep else f"{first}\n\n{langs}"
+            
     if is_video:
         try:
             return await client.send_video(
