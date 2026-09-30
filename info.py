@@ -205,7 +205,24 @@ BAD_WORDS = {
     "tg",
     "original"
 } # Set of bad words to filter out
-   
+# Bad PREFIXES: junk uploader tags stuck to the START of a file name / caption
+# (e.g. "❤️ arenaRocky 1976 1080p"). Add new tags here. Removed only at the very start.
+BAD_PREFIXES = [
+    "arena",
+]
+
+
+def strip_bad_prefixes(text):
+    """Removes BAD_PREFIXES from the very start of a file name / caption."""
+    if not text or not isinstance(text, str):
+        return text
+    out = text
+    for word in BAD_PREFIXES:
+        w = re.escape(word)
+        out = re.sub(rf"^\s*[^\w\s]+\s*(?i:{w})(?![a-z])[\s._\-\]\)]*", "", out, count=1)
+        out = re.sub(rf"^{w}(?=[A-Z0-9])", "", out, count=1)
+    return out.strip() or text
+ 
 
 # ============================
 # Server & Web Configuration
