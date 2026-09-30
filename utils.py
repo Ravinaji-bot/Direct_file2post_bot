@@ -531,17 +531,25 @@ def get_episode_label(filename):
     """'SEASON 01' for a season pack, 'S01E01-04' for an episode range,
     'S01E05' for a single episode, None for movies."""
     from plugins.channel import extract_season_episode
-    season, episode = extract_season_episode(filename or "")
+    name = filename or ""
+    season, episode = extract_season_episode(name)
     if season is None:
         return None
     if not episode:
         return f"SEASON {int(season):02d}"
-    # Indexing turns "S02E05-08" into "S02E05 08" (dash -> space), so also
-    # accept a second episode number after a space.
     if "-" not in str(episode):
-        m = re.search(r"\bS\d{1,2}[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})\s+0*(\d{1,2})(?!\d|p|x|\s*bit)", filename or "", re.IGNORECASE)
-        if m and int(m.group(2)) > int(m.group(1)):
-            episode = f"{m.group(1)}-{m.group(2)}"
+        # "S01 E07 E12" / "S01E07E12": several E-tokens in a row -> first-last
+        m = re.search(r"\bS\d{1,2}[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})((?:[\s._\-]*E(?:p(?:isode)?)?0*\d{1,3}(?!\d))+)", name, re.IGNORECASE)
+        if m:
+            nums = re.findall(r"E(?:p(?:isode)?)?0*(\d{1,3})", m.group(2), re.IGNORECASE)
+            if nums and int(nums[-1]) > int(m.group(1)):
+                episode = f"{m.group(1)}-{nums[-1]}"
+        else:
+            # Indexing turns "S02E05-08" into "S02E05 08" (dash -> space), so also
+            # accept a second episode number after a space.
+            m = re.search(r"\bS\d{1,2}[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})\s+0*(\d{1,2})(?!\d|p|x|\s*bit)", name, re.IGNORECASE)
+            if m and int(m.group(2)) > int(m.group(1)):
+                episode = f"{m.group(1)}-{m.group(2)}"
     parts = [f"{int(p):02d}" for p in str(episode).split("-") if p.strip().isdigit()]
     if not parts:
         return f"SEASON {int(season):02d}"
