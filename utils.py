@@ -548,12 +548,30 @@ def get_episode_label(filename):
     return f"S{int(season):02d}E" + "-".join(parts)
 
 
+def get_quality_label(filename):
+    """'1080p', '1080p HEVC', '4K', 'HEVC' ... detected from the file name (None if not found)."""
+    name = filename or ""
+    quality = None
+    m = re.search(r"(?<![a-z0-9])(2160|1440|1080|720|576|540|480|360|240)p?(?![a-z0-9])",
+                  name, re.IGNORECASE)
+    if m:
+        quality = "4K" if m.group(1) == "2160" else f"{m.group(1)}p"
+    elif re.search(r"(?<![a-z0-9])(4k|uhd)(?![a-z0-9])", name, re.IGNORECASE):
+        quality = "4K"
+    # Only the word HEVC in the file name
+    if re.search(r"(?<![a-z0-9])hevc(?![a-z0-9])", name, re.IGNORECASE):
+        quality = f"{quality} HEVC" if quality else "HEVC"
+    return quality
+
+
 def add_episode_label(buf, filename):
-    """Draws the season/episode label bottom-right on the cover (white text,
-    black border). Returns the original image if there is no label or on error."""
+    """Draws on the cover: season/episode label bottom-right and the quality
+    (disc icon + 1080p) bottom-left, white text with black border.
+    Returns the original image if there is nothing to draw or on error."""
     try:
         label = get_episode_label(filename)
-        if not label:
+        quality = get_quality_label(filename)
+        if not label and not quality:
             return buf
         import io
         from PIL import Image, ImageDraw, ImageFont
@@ -562,14 +580,29 @@ def add_episode_label(buf, filename):
         img = Image.open(buf).convert("RGB")
         w, h = img.size
         size = max(16, int(h * 0.07))
+        stroke = max(2, size // 8)
         try:
             font = ImageFont.truetype(WATERMARK_FONT_PATH, size)
         except Exception:
             font = ImageFont.load_default(size=size)
-        ImageDraw.Draw(img).text(
-            (w - int(w * 0.03), h - int(h * 0.04)), label, font=font,
-            fill=(255, 255, 255), stroke_width=max(2, size // 8),
-            stroke_fill=(0, 0, 0), anchor="rd")
+        draw = ImageDraw.Draw(img)
+        y = h - int(h * 0.04)
+        if label:
+            draw.text((w - int(w * 0.03), y), label, font=font,
+                      fill=(255, 255, 255), stroke_width=stroke,
+                      stroke_fill=(0, 0, 0), anchor="rd")
+        if quality:
+            d = int(size * 0.85)
+            x0 = int(w * 0.03)
+            cy = y - int(size * 0.48)
+            draw.ellipse((x0, cy - d // 2, x0 + d, cy + d // 2),
+                         fill=(255, 255, 255), outline=(0, 0, 0), width=max(2, stroke // 2))
+            r = max(2, int(d * 0.17))
+            cx = x0 + d // 2
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(0, 0, 0))
+            draw.text((x0 + d + int(size * 0.25), y), quality, font=font,
+                      fill=(255, 255, 255), stroke_width=stroke,
+                      stroke_fill=(0, 0, 0), anchor="ld")
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=92)
         out.name = "cover.jpg"
