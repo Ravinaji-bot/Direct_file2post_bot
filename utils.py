@@ -3,7 +3,7 @@ import re
 import os
 import random
 import string
-from info import ULTRA_FAST_MODE, MAX_LIST_ELM, BAD_WORDS, LONG_IMDB_DESCRIPTION, IS_VERIFY, MAX_B_TN, TUTORIAL, TUTORIAL_2, TUTORIAL_3, LOG_CHANNEL, TMDB_ON_SEARCH, TMDB_POSTER
+from info import strip_bad_prefixes, ULTRA_FAST_MODE, MAX_LIST_ELM, BAD_WORDS, LONG_IMDB_DESCRIPTION, IS_VERIFY, MAX_B_TN, TUTORIAL, TUTORIAL_2, TUTORIAL_3, LOG_CHANNEL, TMDB_ON_SEARCH, TMDB_POSTER
 from imdbkit import IMDBKit # pyrefly: ignore 
 import asyncio
 from pyrogram.types import Message, InlineKeyboardButton
@@ -710,6 +710,7 @@ async def delete_group_setting(group_id, key):
 def clean_filename(file_name):
     prefixes = ('[', '@', 'www.')
     unwanted = {word.lower() for word in BAD_WORDS}
+    file_name = strip_bad_prefixes(file_name)
     
     file_name = ' '.join(
         word for word in file_name.split()
