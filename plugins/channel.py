@@ -8,7 +8,7 @@ from collections import defaultdict
 from plugins.Dreamxfutures.Imdbposter import get_movie_detailsx, fetch_image, get_movie_details, build_poster_from_telegram_thumb
 from database.users_chats_db import db
 from pyrogram import Client, filters, enums
-from info import CHANNELS, MOVIE_UPDATE_CHANNEL, LINK_PREVIEW, ABOVE_PREVIEW, BAD_WORDS, TMDB_POSTER, MOVIE_POST_WATERMARK
+from info import CHANNELS, MOVIE_UPDATE_CHANNEL, LINK_PREVIEW, ABOVE_PREVIEW, BAD_WORDS, TMDB_POSTER, MOVIE_POST_WATERMARK, strip_bad_prefixes
 from Script import script
 from database.ia_filterdb import save_file, unpack_new_file_id
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
@@ -156,8 +156,8 @@ def _series_group_key(base_name, season):
         return f"{base_name} S{season}"
 
 def extract_media_info(filename: str, caption: str):
-    filename = normalize(clean_mentions_links(filename).title())
-    caption_clean = clean_mentions_links(caption).lower() if caption else ""
+    filename = normalize(strip_bad_prefixes(clean_mentions_links(filename)).title())
+    caption_clean = clean_mentions_links(strip_bad_prefixes(caption)).lower() if caption else ""
     unified = f"{caption_clean} {filename.lower()}".strip()
 
     season = episode = year = None
