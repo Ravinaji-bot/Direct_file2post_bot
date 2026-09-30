@@ -309,10 +309,16 @@ async def _search_media_id(query: str, api_key=None, file: str = None, is_series
     scored_results = []
     for r in multi_results:
         # Score the string matched against the ORIGINAL title, not the shortened target_query
-        ratio = get_ratio(r.get('title') or r.get('name'), title)
+        name = r.get('title') or r.get('name')
+        ratio = get_ratio(name, title)
         if ratio >= 0.5:   # Lowered from 0.6 to 0.5 to allow for dropped/modified words
             scored_results.append((r, ratio))
-
+        elif year and name and len(title) >= 3 and name.lower().startswith(title.lower()):
+            # "Monster" 2026 -> "Monster: The Lizzie Borden Story" (2026): the filename
+            # only has the short title, but the year matches exactly.
+            r_date = r.get('release_date') or r.get('first_air_date') or ''
+            if r_date[:4] == str(year):
+                scored_results.append((r, 0.5))
     if not scored_results:
         scored_results = [(r, get_ratio(r.get('title') or r.get('name'), title)) for r in multi_results[:10]]
 
@@ -352,15 +358,28 @@ async def _search_media_id(query: str, api_key=None, file: str = None, is_series
         # ranked above raw popularity/recency, since name+year together is what
         # actually identifies the correct movie when multiple share a title.
         year_exact = (year is not None and rd_date.year == year)
-        candidate = {'type': mtype, 'id': r['id'], 'date': rd_date, 'score': r.get('popularity', 0), 'ratio': ratio, 'year_exact': year_exact}
+        # How far this candidate's year is from the filename year: when two shows share
+        # the exact same title (e.g. "Monster" 2004 anime vs a 2022+ series), the one
+        # whose year is closest to the filename year should win.
+        year_gap = abs(rd_date.year - year) if year else 0
+        candidate = {'type': mtype, 'id': r['id'], 'date': rd_date, 'score': r.get('popularity', 0), 'ratio': ratio, 'year_exact': year_exact, 'year_gap': year_gap}
         (candidates_upcoming if rd_date > today else candidates_past).append(candidate)
-
+        
+    # Series: the filename year (e.g. "Monster (2004) S01" vs "Monster (2026) S01") decides
+    # WHICH show it is. If any candidate is within 1 year of it, drop the far-off ones.
+    # If none is close (an old show with a new season), keep all and let the ranking
+    # below pick the nearest year.
+    if is_series and year:
+        if any(c['year_gap'] <= 1 for c in candidates_past + candidates_upcoming):
+            candidates_past = [c for c in candidates_past if c['year_gap'] <= 1]
+            candidates_upcoming = [c for c in candidates_upcoming if c['year_gap'] <= 1]
+            
     # Sort priority: title-match strength first, then an EXACT year match
     # (not just "closer date"), then popularity. Sorting by raw date here used
     # to mean the more recent of two similarly-titled results could win even
     # when the OTHER one was the exact year from the filename - fixed now.
-    candidates_past.sort(key=lambda x: (x['ratio'], x['year_exact'], x['score']), reverse=True)
-    candidates_upcoming.sort(key=lambda x: (x['ratio'], x['year_exact'], x['score']), reverse=True)
+    candidates_past.sort(key=lambda x: (x['ratio'], x['year_exact'], -x['year_gap'], x['score']), reverse=True)
+    candidates_upcoming.sort(key=lambda x: (x['ratio'], x['year_exact'], -x['year_gap'], x['score']), reverse=True)
     final = candidates_past or candidates_upcoming
     if not final:
         return None, None
