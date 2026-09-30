@@ -590,6 +590,13 @@ async def get_movie_details(query, bulk=False, id=False, file=None):
     }
 
 
+def _imdb_query(q: str) -> str:
+    """'Monster 2004 S01E01 720p' -> 'Monster 2004' (title + year at the END, which is
+    the form get_movie_details() understands, so the year is used to pick the right show)."""
+    title, year = _extract_title_and_year(q)
+    return f"{title} {year}" if year else (title or q)
+
+
 async def get_movie_detailsx(query, id=False, file=None, season=None, is_series=None):
     """
     Primary movie details fetcher using direct TMDB API calls.
@@ -600,10 +607,10 @@ async def get_movie_detailsx(query, id=False, file=None, season=None, is_series=
         data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file, season=season, is_series=is_series)
         if not data:
             logger.info(f"TMDB returned no results for '{q}' → switching to IMDb fallback")
-            return await get_movie_details(q)
+            return await get_movie_details(_imdb_query(q))
     except Exception as e:
         logger.info(f"TMDB direct call failed → fallback IMDb: {e}")
-        return await get_movie_details(q)
+        return await get_movie_details(_imdb_query(q))
 
     # Normalize fields
     details = {}
