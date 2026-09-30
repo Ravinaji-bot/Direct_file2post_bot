@@ -527,6 +527,57 @@ def get_languages_html(file_name, caption=None):
     return "\n".join(f"<blockquote>🔊 #{l}</blockquote>" for l in found)
 
 
+def get_episode_label(filename):
+    """'SEASON 01' for a season pack, 'S01E01-04' for an episode range,
+    'S01E05' for a single episode, None for movies."""
+    from plugins.channel import extract_season_episode
+    season, episode = extract_season_episode(filename or "")
+    if season is None:
+        return None
+    if not episode:
+        return f"SEASON {int(season):02d}"
+    parts = [f"{int(p):02d}" for p in str(episode).split("-") if p.strip().isdigit()]
+    if not parts:
+        return f"SEASON {int(season):02d}"
+    return f"S{int(season):02d}E" + "-".join(parts)
+
+
+def add_episode_label(buf, filename):
+    """Draws the season/episode label bottom-right on the cover (white text,
+    black border). Returns the original image if there is no label or on error."""
+    try:
+        label = get_episode_label(filename)
+        if not label:
+            return buf
+        import io
+        from PIL import Image, ImageDraw, ImageFont
+        from plugins.Dreamxfutures.Imdbposter import WATERMARK_FONT_PATH
+        buf.seek(0)
+        img = Image.open(buf).convert("RGB")
+        w, h = img.size
+        size = max(16, int(h * 0.07))
+        try:
+            font = ImageFont.truetype(WATERMARK_FONT_PATH, size)
+        except Exception:
+            font = ImageFont.load_default(size=size)
+        ImageDraw.Draw(img).text(
+            (w - int(w * 0.03), h - int(h * 0.04)), label, font=font,
+            fill=(255, 255, 255), stroke_width=max(2, size // 8),
+            stroke_fill=(0, 0, 0), anchor="rd")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=92)
+        out.name = "cover.jpg"
+        out.seek(0)
+        return out
+    except Exception as e:
+        logger.warning(f"add_episode_label failed: {e}")
+        try:
+            buf.seek(0)
+        except Exception:
+            pass
+        return buf
+
+
 async def get_landscape_thumb(filename):
     """
     Fetches a landscape poster/backdrop image URL for the given filename (via TMDB).
@@ -552,12 +603,13 @@ async def get_landscape_thumb(filename):
         if buf is None:
             return img_url
         if not isinstance(buf, str):
+            buf = add_episode_label(buf, filename)
             buf.name = "cover.jpg"
         return buf
     except Exception as e:
         logger.warning(f"get_landscape_thumb failed: {e}")
         return None
-
+        
 
     usr_agent = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
