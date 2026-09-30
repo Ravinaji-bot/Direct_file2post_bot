@@ -11,6 +11,11 @@ from pyrogram.types import (
 )
 from pyrogram.errors import MessageNotModified, MessageTooLong
 from plugins.Dreamxfutures.Imdbposter import get_movie_detailsx
+from plugins.channel import (
+    extract_season_episode, _fmt_episode_label,
+    RANGE_REGEX, NAMED_RANGE_REGEX, SINGLE_REGEX, NAMED_REGEX, EP_ONLY_RANGE,
+    SEASON_ONLY_REGEX as _CH_SEASON_ONLY_REGEX,
+)
 from info import ADMINS, MOVIE_UPDATE_CHANNEL, ABOVE_PREVIEW
 from utils import temp
 
@@ -25,16 +30,31 @@ post_sessions = {}
 SEASON_ONLY_REGEX = re.compile(r'\bS(?:eason)?\s*0*(\d{1,2})\b', re.IGNORECASE)
 
 
+_YEAR_RE = re.compile(r"(?<![A-Za-z0-9])(?:19|20)\d{2}(?![A-Za-z0-9])")
+
+
 def _extract_season_and_clean_title(movie_name: str):
-    """Pull a season number out of a typed /post title, if present, and return
-    (season_int_or_None, title_with_season_token_removed)."""
-    m = SEASON_ONLY_REGEX.search(movie_name)
-    if not m:
+    """Same season/episode parsing as plugins/channel.py.
+    Returns (season_int_or_None, title_without_season_episode_tokens)."""
+    season, _episode = extract_season_episode(movie_name)
+    if season is None:
         return None, movie_name
-    season = int(m.group(1))
-    cleaned = (movie_name[:m.start()] + movie_name[m.end():]).strip()
-    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip(" -_.[](){}")
-    return season, cleaned or movie_name
+    spans = []
+    for rx in (RANGE_REGEX, NAMED_RANGE_REGEX, SINGLE_REGEX, NAMED_REGEX, EP_ONLY_RANGE, _CH_SEASON_ONLY_REGEX):
+        m = rx.search(movie_name)
+        if m:
+            spans.append((m.start(), m.end()))
+    if not spans:
+        return season, movie_name
+    start, end = min(spans)
+    title = movie_name[:start].strip(" -_.[](){}")
+    if not title:
+        title = (movie_name[:start] + movie_name[end:]).strip(" -_.[](){}")
+    y = _YEAR_RE.search(movie_name[start:])
+    if y and y.group(0) not in title:
+        title = f"{title} {y.group(0)}"
+    title = re.sub(r"\s{2,}", " ", title).strip()
+    return season, (title or movie_name)
 
 USE_GETFILE_BUTTON_BY_DEFAULT = True
 DEFAULT_WATERMARK = "Join [ᴅʀᴇᴀᴍxʙᴏᴛᴢ](https://t.me/Magicofgroup)"
@@ -162,7 +182,7 @@ async def post_command(client: Client, message: Message):
 #code is created by @bharath_boy for public use so atleast don't remove credits
 async def start_post_session(client: Client, message: Message, user_id: int, movie_name: str):
     season_num, title_for_lookup = _extract_season_and_clean_title(movie_name)
-    movie_details = await get_movie_detailsx(title_for_lookup, season=season_num)
+    movie_details = await get_movie_detailsx(title_for_lookup, season=season_num, is_series=(season_num is not None))
     if not movie_details:
         return await message.reply_text("Could not fetch details for the movie.")
 
@@ -216,6 +236,16 @@ async def _build_final_post_content(session: dict, session_id: int):
         )
 
     final_caption = session["caption"]
+    if session.get("season"):
+        _, _ep = extract_season_episode(session["movie_name"])
+        try:
+            _sn = f"{int(session['season']):02d}"
+        except (TypeError, ValueError):
+            _sn = str(session["season"])
+        if not final_caption.endswith("\n"):
+            final_caption += "\n"
+        final_caption += f"➥ <b>Season :</b> <code>{_sn}</code>\n"
+        final_caption += f"➥ <b>Episodes :</b> <code>{_fmt_episode_label(_ep)}</code>\n"
     if session.get("custom_languages"):
         final_caption += session["lang_format"].format(
             langs=', '.join(session['custom_languages']))
