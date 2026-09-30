@@ -536,6 +536,12 @@ def get_episode_label(filename):
         return None
     if not episode:
         return f"SEASON {int(season):02d}"
+    # Indexing turns "S02E05-08" into "S02E05 08" (dash -> space), so also
+    # accept a second episode number after a space.
+    if "-" not in str(episode):
+        m = re.search(r"\bS\d{1,2}[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})\s+0*(\d{1,2})(?!\d|p|x|\s*bit)", filename or "", re.IGNORECASE)
+        if m and int(m.group(2)) > int(m.group(1)):
+            episode = f"{m.group(1)}-{m.group(2)}"
     parts = [f"{int(p):02d}" for p in str(episode).split("-") if p.strip().isdigit()]
     if not parts:
         return f"SEASON {int(season):02d}"
