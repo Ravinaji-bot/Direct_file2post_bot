@@ -82,7 +82,8 @@ QUALITY_PATTERN = re.compile(
 YEAR_PATTERN = re.compile(r"(?<![A-Za-z0-9])(?:19|20)\d{2}(?![A-Za-z0-9])")
 RANGE_REGEX = re.compile(r'\bS(\d{1,2})[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,2})\s*(?:to|-)\s*(?:E(?:p(?:isode)?)?)?0*(\d{1,2})',re.IGNORECASE)
 SINGLE_REGEX = re.compile(r'\bS(\d{1,2})[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})', re.IGNORECASE)
-NAMED_REGEX = re.compile(r'Season\s*0*(\d{1,2})[\s\-,:]*Ep(?:isode)?\s*0*(\d{1,3})', re.IGNORECASE)
+NAMED_RANGE_REGEX = re.compile(r'Season[\s._]*0*(\d{1,2})[\s._\-,:]*Ep(?:isode)?[\s._]*0*(\d{1,3})[\s._]*(?:to|-|\u2013)[\s._]*(?:Ep(?:isode)?[\s._]*)?0*(\d{1,3})(?!\d)', re.IGNORECASE)
+NAMED_REGEX = re.compile(r'Season[\s._]*0*(\d{1,2})[\s._\-,:]*Ep(?:isode)?[\s._]*0*(\d{1,3})', re.IGNORECASE)
 EP_ONLY_RANGE = re.compile(r'\b(?:EP|Episode)0*(\d{1,3})\s*-\s*0*(\d{1,3})\b',re.IGNORECASE)
 # Fallback for whole-season-pack files that carry only a season marker with NO
 # episode number at all, e.g. "Show Name S01" or "Show Name Season 02" (common
@@ -117,12 +118,14 @@ def extract_ott_platform(text: str) -> str:
 
 def extract_season_episode(filename: str) -> Tuple[Optional[int], Optional[str]]:
     if m := EP_ONLY_RANGE.search(filename):
-        return 1, f"{int(m.group(1))}-{int(m.group(2))}"
-    for pattern in (RANGE_REGEX, SINGLE_REGEX, NAMED_REGEX):
+        sm = SEASON_ONLY_REGEX.search(filename)
+        season = int(sm.group(1) or sm.group(2)) if sm else 1
+        return season, f"{int(m.group(1))}-{int(m.group(2))}"
+    for pattern in (RANGE_REGEX, NAMED_RANGE_REGEX, SINGLE_REGEX, NAMED_REGEX):
         if m := pattern.search(filename):
             season = int(m.group(1))
-            if pattern == RANGE_REGEX:
-                ep = f"{m.group(2)}-{m.group(3)}"
+            if pattern in (RANGE_REGEX, NAMED_RANGE_REGEX):
+                ep = f"{int(m.group(2))}-{int(m.group(3))}"
             else:
                 ep = m.group(2)
             return season, ep
@@ -172,7 +175,7 @@ def extract_media_info(filename: str, caption: str):
     season, episode = extract_season_episode(filename)
     if season is not None:
         tag = "#SERIES"
-        if m := (RANGE_REGEX.search(filename) or SINGLE_REGEX.search(filename) or NAMED_REGEX.search(filename) or EP_ONLY_RANGE.search(filename) or SEASON_ONLY_REGEX.search(filename)):
+        if m := (RANGE_REGEX.search(filename) or NAMED_RANGE_REGEX.search(filename) or SINGLE_REGEX.search(filename) or NAMED_REGEX.search(filename) or EP_ONLY_RANGE.search(filename) or SEASON_ONLY_REGEX.search(filename)):
             match_str = m.group(0)
             start_idx = filename.lower().find(match_str.lower())
             end_idx = start_idx + len(match_str)
