@@ -8,7 +8,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
 import os
-from info import DREAMXBOTZ_IMAGE_FETCH, TMDB_API_KEY, MAX_LIST_ELM
+from info import DREAMXBOTZ_IMAGE_FETCH, TMDB_API_KEY, MAX_LIST_ELM, strip_bad_prefixes
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,7 @@ def _extract_title_and_year(query: str):
     Everything before that year is treated as the title. Falls back to the old
     end-of-string behavior if no such year is found anywhere.
     """
+    query = strip_bad_prefixes(query)
     match = re.search(r'(19\d{2}|20\d{2})', query)
     if match:
         year = int(match.group(1))
@@ -575,7 +576,7 @@ async def get_movie_detailsx(query, id=False, file=None, season=None, is_series=
     Primary movie details fetcher using direct TMDB API calls.
     Falls back to IMDb-based get_movie_details() on failure.
     """
-    q = str(query).strip()
+    q = strip_bad_prefixes(str(query).strip())
     try:
         data = await _fetch_tmdb_data(q, api_key=TMDB_API_KEY or None, file=file, season=season, is_series=is_series)
         if not data:
