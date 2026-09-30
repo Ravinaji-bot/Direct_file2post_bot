@@ -536,7 +536,14 @@ def get_episode_label(filename):
     if season is None:
         return None
     if not episode:
-        return f"SEASON {int(season):02d}"
+        # "S01 COMBINED E05 08" / "S01 COMPLETE E01 04": a filler word between the
+        # season and the episode numbers (and indexing turns "E05-08" into "E05 08").
+        m = re.search(r"\bS\d{1,2}(?:[\s._\-]+(?:combined|complete|full|batch|pack))*[\s._\-]*E(?:p(?:isode)?)?0*(\d{1,3})(?:[\s._\-]*(?:to|-)?[\s._\-]*E?(?:p(?:isode)?)?0*(\d{1,2})(?!\d|p|x|b|\s*bit))?", name, re.IGNORECASE)
+        if not m:
+            return f"SEASON {int(season):02d}"
+        episode = m.group(1)
+        if m.group(2) and int(m.group(2)) > int(m.group(1)):
+            episode = f"{m.group(1)}-{m.group(2)}"
     if "-" not in str(episode):
         # "S01 E07 E12" / "S01E07E12": several E-tokens in a row -> first-last
         m = re.search(r"\bS\d{1,2}[^\w\n\r]*E(?:p(?:isode)?)?0*(\d{1,3})((?:[\s._\-]*E(?:p(?:isode)?)?0*\d{1,3}(?!\d))+)", name, re.IGNORECASE)
